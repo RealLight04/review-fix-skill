@@ -1,85 +1,136 @@
 # review-fix
 
-코드 리뷰가 낸 finding들을, 위험도별로 등급을 매겨 그 등급에 맞는 모델(Haiku / Sonnet / Opus)에게
-**실제로 위임해서 고치는** [Claude Code](https://claude.com/claude-code) 스킬입니다.
+**Stop burning Opus on one-line fixes.**
 
-## 왜
+A [Claude Code](https://claude.com/claude-code) skill that grades each code
+review finding by risk, then hands the fix to the cheapest model that can
+safely do it — Haiku for mechanical edits, Sonnet for ordinary bugs, Opus for
+anything expensive to get wrong.
 
-리뷰가 찾아낸 문제들은 위험도가 제각각입니다. 죽은 파일 하나 지우는 것과 인증 로직의
-엣지케이스를 고치는 걸 같은 모델로 처리하면, 트리비얼한 데 비싼 모델을 쓰거나(낭비)
-복잡한 데 싼 모델을 써서 놓칩니다(사고). 이 스킬은 그 판단 기준을 고정해둡니다.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-8A63D2.svg)](https://code.claude.com/docs/en/skills)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/RealLight04/review-fix-skill/pulls)
 
-**추천만 하지 않습니다.** Agent 도구의 `model` 파라미터로 실제 그 모델에게 수정을
-맡깁니다. 등급 판단·순서·재검증은 오케스트레이션 세션이 하고, 실제 파일 수정은 고른
-모델의 서브에이전트가 합니다.
+[한국어 README](README.ko.md) · [한국어 SKILL](SKILL.ko.md)
 
-## 비슷한 것과 뭐가 다른가
+---
 
-찾아본 결과, 아래 셋을 하나로 합친 건 없었습니다:
+## Read this first: what you already have
 
-| | 실제 수정 적용 | 위험도별 모델 티어링 | 리뷰 finding에 직접 연결 |
-|---|:---:|:---:|:---:|
-| 공식 `/code-review --fix` | ✅ | ❌ (모델 하나로 전부) | ✅ |
-| 범용 model-routing 플러그인들 | ❌ (보고서만) | ✅ | ❌ (범용 작업용) |
-| **review-fix** | ✅ | ✅ | ✅ |
+Claude Code ships `/code-review --fix`, and it is good. Before installing
+anything, know that it already:
 
-## 등급
+- applies review findings straight to your working tree (`--fix`)
+- tags findings by severity (Important / Nit / Pre-existing)
+- reports each finding back as **fixed, skipped, or no change needed**
+- trades coverage against confidence via effort levels (`low` … `max`)
+- lets you redefine severity per repository with `REVIEW.md`
+- escalates to a deeper cloud review with `/code-review ultra --fix`
 
-| 등급 | 기준 | 예 | 모델 |
-|---|---|---|---|
-| 사무적 | 기계적 조작, 되돌리기 쉬움 | 죽은 파일 삭제, 미사용 import 제거, 오타 | `haiku` |
-| 일반 | 주변 로직 이해가 필요한 통상적 버그 수정 | 조건문 오류, 널 체크 누락 | `sonnet` |
-| 고위험 | 잘못되면 되돌리기 어렵거나 파급이 큼 | 인증/결제, 마이그레이션, 아키텍처 변경 | `opus` |
+If that covers your needs, you do not need this skill. Use the built-in one.
 
-애매하면 위 등급으로 올립니다 — 비용을 아끼려고 등급을 낮추지 않습니다.
+## What this adds
 
-## 안전장치
+Two things `/code-review --fix` does not do.
 
-- **검증 안 된 finding은 안 고칩니다.** `PLAUSIBLE`(리뷰가 확신 못 한) finding은 목록만
-  보여주고 손대지 않습니다.
-- **자기보고를 안 믿습니다.** 모든 등급에서, 서브에이전트가 "완료"라고 해도 직접
-  확인합니다(파일 존재 여부, git status, 필요하면 테스트 실행).
-- **실패하면 조용히 넘어가지 않습니다.** 재시도 → 상위 등급으로 재시도 → 그래도 안 되면
-  사용자에게 그대로 보고, 3단계로 정해져 있습니다.
-- **커밋·푸시를 하지 않습니다.** 사용자가 명시적으로 요청하기 전까지.
+**1. Per-finding model tiers.** The built-in fix path runs at one model. This
+skill grades each finding and dispatches it to a different model accordingly:
 
-## 설치
+| Tier | Test | Model |
+|---|---|---|
+| Mechanical | Rote change, easy to undo — dead file, unused import, typo | `haiku` |
+| Ordinary | Everyday bug fix needing surrounding logic understood | `sonnet` |
+| High-risk | Auth, payments, migrations, concurrency, cross-file behavior | `opus` |
 
-**권장 (skills CLI):**
+Ties break upward. Grading down to save money is not allowed — a wrong fix
+costs more than the model does.
+
+**2. Escalation on failed verification.** Every tier verifies the subagent's
+work rather than trusting its self-report (mechanical: check the file really
+changed; ordinary: run the test script; high-risk: read the diff for scope
+creep). When verification fails, the finding retries at the same tier with
+tighter bounds, then one tier up, then stops and reports. No silent failures,
+no infinite loops.
+
+It also reads `CLAUDE.md` for paired-file rules — "change this file, change
+that one too" — so a finding naming one half of a pair doesn't get fixed
+halfway and reported as done.
+
+## Prior art
+
+Model tiering is not new, and this skill is a variation on work that came
+before it:
+
+- **[Aider's architect/editor split](https://aider.chat/2024/09/26/architect.html)**
+  (Sept 2024) — a strong model plans the change, a cheap one writes the diff.
+  The original of "split one task across model tiers." Tiers by *phase*, where
+  this skill tiers by *risk*.
+- **[AqueGen/model-routing](https://github.com/AqueGen/model-routing)** — routes
+  Claude Code subagents by task type (scout, implementer, reviewer). Notably,
+  it cites [RouteLLM (ICLR 2025)](https://arxiv.org/pdf/2406.18665) for the
+  claim that *task-type routing beats complexity-score routing* — which is an
+  argument against the approach this skill takes. Worth reading before you pick
+  one.
+- **[crissmoldovan/agent-skills](https://github.com/crissmoldovan/agent-skills)** —
+  a 28-skill pack including a model-routing skill, profile-driven rather than
+  automatic.
+
+## What has not been measured
+
+Honest disclosure, because nobody in this space seems to publish numbers:
+
+- **Whether tiering nets out positive here.** Grading each finding costs tokens
+  in the orchestrating session. That cost has not been weighed against the
+  savings from cheaper fix models. It may not pay for itself on small batches.
+- **Whether Haiku matches Opus on "mechanical" findings.** The tier boundaries
+  are reasoned, not measured.
+
+A benchmark addressing both is in [`benchmark/`](benchmark/). Until it has
+results, treat the tier table as a hypothesis.
+
+## Install
+
 ```bash
 npx skills add RealLight04/review-fix-skill
 ```
 
-**수동 (macOS/Linux):**
+<details>
+<summary>Manual install</summary>
+
+macOS / Linux:
 ```bash
 git clone https://github.com/RealLight04/review-fix-skill.git ~/.claude/skills/review-fix
 ```
 
-**수동 (Windows PowerShell):**
+Windows PowerShell:
 ```powershell
 git clone https://github.com/RealLight04/review-fix-skill.git `
   "$env:USERPROFILE\.claude\skills\review-fix"
 ```
+</details>
 
-## 사용
+## Use
 
-먼저 코드 리뷰를 돌립니다(`/code-review`, 또는 리뷰 결과를 만들어내는 다른 스킬).
-그다음:
+Run a review first, then:
 
 ```
 /review-fix
 ```
 
-인자 없이 부르면 대화의 가장 최근 리뷰 결과를 대상으로 씁니다. finding을 직접
-붙여넣어도 됩니다:
+With no argument it uses the most recent review output in the conversation.
+You can also paste findings directly:
 
 ```
-/review-fix app/alerts.py:42 — dispatch()가 커밋 전 예외를 삼켜 중복 발송 가능
+/review-fix app/alerts.py:42 — dispatch() swallows the exception before commit, so alerts can double-send
 ```
 
-자세한 동작은 [SKILL.md](SKILL.md)에 전부 있습니다 — 이 스킬 자체가 Claude에게 주는
-지시문이라, 읽어보면 정확히 뭘 하는지 그대로 보입니다.
+Findings marked `PLAUSIBLE` or carrying no verdict are listed but not touched —
+unverified claims don't get to edit your files. Nothing is committed until you
+ask.
 
-## 라이선스
+Full behavior is in [SKILL.md](SKILL.md). It's the prompt Claude receives, so
+reading it tells you exactly what happens.
+
+## License
 
 [MIT](LICENSE)

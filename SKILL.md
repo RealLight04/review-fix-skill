@@ -1,108 +1,125 @@
 ---
 name: review-fix
-description: 코드 리뷰(/code-review, ss-lint, ss-score 등)가 finding을 낸 뒤, finding마다 위험도·복잡도를 판단해 고치는 데 쓸 모델(Haiku/Sonnet/Opus)을 자동으로 고르고 그 모델로 실제 수정을 적용한다. 리뷰가 끝났고 "이제 고쳐야 하는데 어떤 모델로 고칠지"가 애매할 때 쓴다.
-argument-hint: "[선택: 고칠 finding 목록/범위 — 비우면 이 대화의 가장 최근 리뷰 결과 사용]"
+description: After a code review produces findings, grade each one by risk and complexity, then delegate the fix to the cheapest model that can safely do it (Haiku for mechanical, Sonnet for ordinary, Opus for high-risk). Use when a review is done and you are about to fix a batch of findings of differing severity.
+argument-hint: "[optional: findings to fix — defaults to the most recent review in this conversation]"
 allowed-tools: Read, Grep, Glob, Bash, Agent
 ---
 
-## 언제 안 쓰나
+## When NOT to use this
 
-- finding이 하나뿐이고 사소해서 등급 판단·서브에이전트 위임의 오버헤드가 낭비인 경우 —
-  그냥 직접 고친다. 이 스킬은 finding이 여러 개거나 등급이 갈릴 때 가치가 있다.
-- 리뷰 자체가 아직 없는 경우 — 먼저 리뷰를 돌린다.
+- One small finding. Grading it and handing it to a subagent costs more than
+  just fixing it. This skill earns its keep when findings are several and their
+  risk differs.
+- No review has run yet. Run one first. This skill consumes findings, it does
+  not produce them.
+- You want every finding fixed by the strongest model regardless of cost. Use
+  `/code-review --fix` instead — it is simpler and does exactly that.
 
-# 리뷰 결과를 모델 자동 선택으로 고치기
+# Fix review findings, one model tier at a time
 
-## 왜 필요한가
+## Why
 
-리뷰가 찾아낸 finding들은 위험도·복잡도가 제각각이다. 죽은 파일 하나 지우는 것과
-인증 로직의 엣지케이스를 고치는 것을 같은 모델로 처리하면, 트리비얼한 것에 비싼 모델을
-쓰거나(낭비) 복잡한 것에 싼 모델을 써서 놓친다(사고). 기준을 매번 감으로 정하지 않도록
-여기 고정해둔다.
+Findings from a single review differ wildly in risk. Deleting a dead file and
+patching an auth edge case are not the same job. Handing both to one model
+means either paying frontier prices for mechanical edits, or letting a cheap
+model near code where a subtle mistake is expensive. This skill fixes the
+grading rubric in place so the call is not re-improvised every time.
 
-**이 스킬은 추천만 하지 않는다.** Agent 도구의 `model` 파라미터로 실제 그 모델에게
-수정을 맡긴다. 오케스트레이션(등급 판단·순서·재검증)은 이 세션이 하고, 실제 파일
-수정은 고른 모델의 서브에이전트가 한다.
+**This skill does not merely recommend a tier.** It passes `model` to the Agent
+tool so the chosen model performs the edit. Orchestration — grading, ordering,
+re-verification — stays in this session; the file edits happen in the chosen
+model's subagent.
 
-## 입력
+## Input
 
-- `$ARGUMENTS`가 있으면 그것을 finding 목록으로 본다.
-- 없으면 이 대화에서 가장 최근에 나온 리뷰 결과를 쓴다 — `/code-review`나
-  `ReportFindings` 형식(`file`, `line`, `summary`, `failure_scenario`, 선택적 `verdict`)이
-  흔하지만, `ss-lint`/`ss-score`/`ss-audit`의 산출물도 같은 방식으로 다룬다.
-- 리뷰 결과가 전혀 없으면 진행하지 말고 사용자에게 먼저 리뷰를 돌리라고 말한다.
-  finding 없이 "일단 고쳐보자"로 시작하지 않는다.
+- If `$ARGUMENTS` is present, treat it as the findings list.
+- Otherwise use the most recent review output in this conversation. The
+  `/code-review` and `ReportFindings` shape (`file`, `line`, `summary`,
+  `failure_scenario`, optional `verdict`) is the common case, but output from
+  any review-producing skill works the same way.
+- If there are no findings at all, stop and say so. Do not start from "let's
+  just look for something to fix."
 
-## 1단계 — 처리 대상 거르기
+## Step 1 — Filter
 
-- 시작하기 전에 `git status --short`로 **기준선**을 찍어둔다. 이 저장소엔 이 스킬과
-  무관한 미추적/수정 파일이 이미 있을 수 있다 — 4단계에서 "이 스킬이 바꾼 것"과
-  "원래 있던 변경"을 구분하려면 이 기준선이 필요하다.
-- `verdict: CONFIRMED`(또는 검증을 통과했다고 명시된 것)만 자동 수정 대상으로 삼는다.
-- `verdict: PLAUSIBLE`이거나 검증되지 않은 finding은 **고치지 않고 목록만 사용자에게
-  보여준다.** 확인 안 된 주장을 근거로 파일을 바꾸지 않는다 — 이건 이 스킬만의 규칙이
-  아니라 일반 원칙이다.
-- 중복되거나 서로 겹치는 finding은 합쳐서 하나로 처리한다(같은 파일의 같은 원인).
-- 리뷰가 끝난 시점과 지금 사이에 시간이 떴다면(다른 작업을 거쳐 왔다면), finding이
-  가리키는 파일이 그 사이 또 바뀌지 않았는지 가볍게 확인한다 — 옛 리뷰를 최신 코드에
-  맹목적으로 적용하지 않는다.
+- Take a baseline with `git status --short` before touching anything. The
+  working tree may already carry unrelated modified or untracked files; without
+  a baseline, step 4 cannot separate "what this skill changed" from "what was
+  already there."
+- Only findings marked `CONFIRMED` (or otherwise stated to have passed
+  verification) are eligible for automatic fixing.
+- Findings marked `PLAUSIBLE`, or carrying no verdict at all, are **listed for
+  the user and left alone.** Do not edit files on the strength of an unverified
+  claim. This is a general principle, not a rule peculiar to this skill.
+- Merge findings that duplicate or overlap each other (same file, same cause).
+- If time has passed since the review, check that the files a finding points at
+  have not changed underneath it. Do not apply a stale review to current code.
 
-## 2단계 — finding마다 등급 매기기
+## Step 2 — Grade each finding
 
-아래 순서로 판단하고, **애매하면 위 등급으로 올린다** (비용을 아끼려고 등급을 낮추지
-않는다 — 잘못 고치는 비용이 모델 비용보다 크다).
+Work down the table, and **when torn between two tiers, take the higher one.**
+Never grade down to save money: a wrong fix costs more than the model does.
 
-| 등급 | 기준 | 예 | 모델 |
+| Tier | Test | Examples | Model |
 |---|---|---|---|
-| 사무적 | 기계적 조작. 판단이 거의 필요 없고 되돌리기 쉽다 | 죽은 파일 삭제, 미사용 import 제거, 오타, 포맷팅, 주석에 이미 답이 있는 수정 | `haiku` |
-| 일반 | 주변 로직을 이해해야 하는 통상적인 버그 수정 | 조건문 오류, 널 체크 누락, 흔한 리팩터, 스키마 안전한 컬럼 추가 | `sonnet` |
-| 고위험 | 잘못되면 되돌리기 어렵거나 파급이 크다 | 인증/결제/개인정보 관련, 동시성·트랜잭션, 아키텍처 변경, DB 마이그레이션 스크립트, 여러 파일에 걸친 동작 변경, 트레이드오프가 명확하지 않은 것 | `opus` |
+| Mechanical | Rote change. Almost no judgment, easy to undo | Delete dead file, drop unused import, typo, formatting, a fix the surrounding comment already spells out | `haiku` |
+| Ordinary | An everyday bug fix that needs the surrounding logic understood | Wrong condition, missing null check, routine refactor, schema-safe column addition | `sonnet` |
+| High-risk | Expensive to get wrong or hard to undo | Auth, payments, personal data, concurrency and transactions, architectural change, DB migrations, behavior changes spanning files, unclear trade-offs | `opus` |
 
-CLAUDE.md가 있는 프로젝트라면 등급을 매기기 전에 관련 CLAUDE.md를 먼저 읽는다 —
-"이 규칙을 어겼다"는 finding은 그 규칙이 실제로 명시돼 있는지 확인하고 나서 등급을
-매긴다(허위 규칙 위반으로 잘못된 등급을 매기지 않도록). 같은 읽기에서, CLAUDE.md가
-"이 파일을 고치면 저 파일도 같이 고쳐야 한다"는 짝 규칙(예: 스키마 변경 = models.py +
-database.py 둘 다)을 명시하는지도 본다 — finding이 짝 중 한쪽만 가리켜도, 실제 수정
-범위는 그 짝 전체다. 이걸 놓치면 반쪽만 고치고 "완료"로 보고하게 된다.
+If the project has a `CLAUDE.md`, read the relevant parts before grading. A
+finding of the form "this violates the project rules" needs that rule to
+actually exist — check before grading it, so a hallucinated rule does not drive
+a tier. In the same pass, look for paired-file rules ("changing this file means
+changing that one too" — e.g. a schema change touching both the model
+definition and the migration list). When a finding names only one half of such
+a pair, the real scope is the whole pair. Miss this and you will fix half the
+problem and report it as done.
 
-## 3단계 — 모델별로 묶어서 적용
+## Step 3 — Group, delegate, verify
 
-**같은 파일, 또는 CLAUDE.md의 짝 규칙으로 묶이는 파일들은 같은 Agent 호출 안에
-묶는다**(따로따로 보내면 서로 덮어쓰거나 반쪽만 고쳐진다). 파일(과 그 짝)이 겹치지
-않으면 등급이 달라도 병렬로 보낼 수 있다.
+**Findings in the same file — or in files bound together by a paired-file rule —
+go in one Agent call.** Split across calls, they overwrite each other or land
+half-applied. Findings whose files (and pairs) do not overlap can run in
+parallel even at different tiers.
 
-**묶은 그룹 안에 등급이 다른 finding이 섞여 있으면, 그 그룹 전체를 가장 높은 등급의
-모델로 보낸다.** 사무적 finding과 고위험 finding이 같은 파일에 있다고 사무적 모델로
-묶어 처리하지 않는다 — 2단계의 "애매하면 올린다" 원칙이 여기도 그대로 적용된다.
+**When a group mixes tiers, send the whole group at the highest tier present.**
+A mechanical finding sharing a file with a high-risk one does not get handled
+mechanically. Step 2's "take the higher one" applies here too.
 
-각 Agent 호출에는 다음을 명시한다:
-- 고칠 finding의 정확한 내용(파일·줄·요약·실패 시나리오)
-- **이 finding만** 고치라는 것 — 눈에 띄는 다른 문제를 김에 같이 고치지 말 것
-- 관련 CLAUDE.md 규칙(있다면 인용) — 짝 규칙이 있다면 "이 파일도 같이 고쳐야 한다"까지
-- 커밋은 하지 말 것 — 사용자가 명시적으로 요청하기 전까지 커밋·푸시하지 않는다(일반 원칙)
+Each Agent call states:
 
-**모든 등급에서, Agent가 "완료"라고 보고해도 그 말만 믿지 않는다.** 등급에 따라
-확인 방법의 무게가 다를 뿐이지, 확인 자체를 건너뛰는 등급은 없다:
-- 사무적: 결과를 직접 눈으로 확인한다(예: 지웠다는 파일이 실제로 없는지 `test -f`,
-  `git status`로 사라졌는지).
-- 일반: 위 확인 + 관련 스모크/테스트 스크립트가 있으면 돌려본다.
-- 고위험: 위 확인 + diff가 finding 범위를 벗어나지 않았는지 직접 읽고 승인한다.
+- the finding verbatim — file, line, summary, failure scenario
+- that it fixes **this finding only**; no fixing other things it happens to notice
+- the relevant `CLAUDE.md` rules, quoted — including the paired-file obligation
+- that it must not commit; nothing is committed until the user explicitly asks
 
-**확인 결과가 기대와 다르면(파일이 그대로 있다, diff가 범위를 벗어났다, 테스트가
-깨졌다) 그 등급에서 조용히 넘어가지 않는다:**
-1. 같은 모델로 한 번 더, 왜 실패했는지와 정확한 범위를 더 명시해서 재시도한다.
-2. 그래도 안 되면 한 등급 위 모델로 올려서 재시도한다(사무적→일반→고위험).
-3. 고위험에서도 안 되면 재시도를 멈추고, 무엇을 시도했는지와 지금 상태를 사용자에게
-   그대로 보고한다 — 조용히 실패로 남겨두거나 무한 재시도하지 않는다.
+**At every tier, a subagent reporting "done" is not evidence that it is done.**
+Tiers differ in how heavy the check is, not in whether there is one:
 
-## 4단계 — 보고
+- Mechanical: confirm the result directly (the file it says it deleted is
+  actually gone — `test -f`, `git status`).
+- Ordinary: that, plus run the project's smoke or test script if one exists.
+- High-risk: that, plus read the diff yourself and confirm it stayed inside the
+  finding's scope before accepting it.
 
-수정이 끝나면 finding마다 표로 보여준다: 요약 / 고른 등급 / 실제 쓴 모델 / 그 이유(한 줄) /
-결과(수정함·건너뜀·이미 문제없음·재시도 후 실패). PLAUSIBLE이라 건너뛴 것은 별도로
-모아 "이건 확인이 더 필요해서 고치지 않았다"고 분명히 말한다.
+**When a check comes back wrong — the file is still there, the diff wandered
+outside scope, tests broke — do not quietly move on:**
 
-마지막 `git status --short`를 1단계에서 찍어둔 기준선과 비교해서, **이 스킬이 만든
-변경만** 보여준다 — 기준선에 이미 있던 미추적/수정 파일은 "이 스킬과 무관하게 이미
-있던 것"이라고 구분해서 언급한다(섞어서 "바뀐 파일 목록"으로 뭉치지 않는다).
+1. Retry at the same tier, stating what failed and bounding the scope harder.
+2. If it fails again, retry one tier up (mechanical → ordinary → high-risk).
+3. If it fails at high-risk, stop retrying. Report what was attempted and the
+   current state. Do not leave a silent failure, and do not loop.
 
-커밋·푸시는 사용자가 요청하기 전까지 하지 않는다.
+## Step 4 — Report
+
+One row per finding: summary, tier chosen, model actually used, the one-line
+reason, and the outcome (fixed, skipped, no change needed, failed after retry).
+Collect the `PLAUSIBLE` skips separately and say plainly that they were left
+alone pending verification.
+
+Diff the final `git status --short` against the step 1 baseline and show **only
+what this skill changed.** Anything already in the baseline gets named as
+pre-existing and unrelated — never folded into one undifferentiated "files
+changed" list.
+
+Nothing is committed or pushed until the user asks.
