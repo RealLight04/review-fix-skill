@@ -15,6 +15,11 @@ anything expensive to get wrong.
 
 ---
 
+> New to Claude Code? A **skill** is a reusable prompt Claude Code loads on request (here, via
+> `/review-fix`). A **finding** is one issue a code review reported — a file, a line, and what's
+> wrong with it. This skill takes findings someone already produced and fixes them; it does not
+> review code itself.
+
 ## Read this first: what you already have
 
 Claude Code ships `/code-review --fix`, and it is good. Before installing
