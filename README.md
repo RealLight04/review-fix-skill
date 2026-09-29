@@ -26,10 +26,10 @@ Claude Code ships `/code-review --fix`, and it is good. Before installing
 anything, know that it already:
 
 - applies review findings straight to your working tree (`--fix`)
-- tags findings by severity (Important / Nit / Pre-existing)
+- follows your `CLAUDE.md` like any session (the managed GitHub Code Review also
+  reads `REVIEW.md`; the local command does not)
 - reports each finding back as **fixed, skipped, or no change needed**
 - trades coverage against confidence via effort levels (`low` … `max`)
-- lets you redefine severity per repository with `REVIEW.md`
 - escalates to a deeper cloud review with `/code-review ultra --fix`
 
 If that covers your needs, you do not need this skill. Use the built-in one.
@@ -104,8 +104,9 @@ checks whether each task makes sense without the conversation's context and how
 many groups remain after grouping. review-fix takes only findings a code review
 already produced. File, line and problem are fixed in advance, so there is less
 to decide about whether to delegate, and more machinery for review fixes
-specifically: filtering unverified findings, reading `CLAUDE.md` paired-file
-rules.
+specifically: filtering unverified findings, checking that a cited `CLAUDE.md`
+rule actually exists, skipping findings whose files changed since the review,
+and hashing already-dirty files so the report stays honest.
 
 In practice:
 
@@ -158,8 +159,10 @@ You can also paste findings directly:
 
 Findings from review output that are marked `PLAUSIBLE` or carry no verdict are
 listed but not touched — unverified claims don't get to edit your files.
-Findings you paste yourself count as confirmed by you, though the skill still
-reads the cited code before editing. Nothing is committed until you ask.
+Findings you paste yourself count as confirmed by you, unless they are
+explicitly marked `PLAUSIBLE`. The skill still reads the cited code first and
+reports "no change needed" if the problem is not there. Nothing is committed
+until you ask.
 
 Full behavior is in [SKILL.md](SKILL.md). It's the prompt Claude receives, so
 reading it tells you exactly what happens.

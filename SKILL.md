@@ -33,8 +33,8 @@ model's subagent.
 ## Input
 
 - If `$ARGUMENTS` is present, treat it as the findings list. Findings the user
-  passes this way count as confirmed by the user, even without a `verdict`
-  field. Still read the cited code before editing: if the described problem is
+  passes this way count as confirmed by the user even without a `verdict`
+  field, unless they are explicitly marked `PLAUSIBLE`. Still read the cited code before editing: if the described problem is
   not there, report "no change needed" instead of inventing a fix.
 - Otherwise use the most recent review output in this conversation. The
   `/code-review` and `ReportFindings` shape (`file`, `line`, `summary`,
@@ -45,16 +45,19 @@ model's subagent.
 
 ## Step 1 — Filter
 
-- Take a baseline before touching anything: `git status --short`, plus
-  `git hash-object <path>` for every path it lists. The working tree may
+- Take a baseline before touching anything:
+  `git status --short --untracked-files=all` (so each untracked file is listed
+  on its own, not just its directory), plus `git hash-object <path>` for every file it lists.
+  A deleted path has no hash; record it as deleted. The working tree may
   already carry unrelated modified or untracked files, and this skill may edit
   one of them. Paths alone cannot show that; the hashes can. Without a baseline,
   step 4 cannot separate "what this skill changed" from "what was already
   there."
 - Only findings marked `CONFIRMED` (or otherwise stated to have passed
-  verification), and findings the user passed directly in `$ARGUMENTS`, are
-  eligible for automatic fixing.
-- Findings from review output that are marked `PLAUSIBLE`, or carry no verdict
+  verification), and findings the user passed directly in `$ARGUMENTS` (unless
+  explicitly `PLAUSIBLE`), are eligible for automatic fixing.
+- Findings taken from this conversation's review output (not passed in
+  `$ARGUMENTS`) that are marked `PLAUSIBLE`, or carry no verdict
   at all, are **listed for the user and left alone.** An explicit `PLAUSIBLE`
   stays alone even when the user pastes it. Do not edit files on the strength of an unverified
   claim. This is a general principle, not a rule peculiar to this skill.
@@ -122,25 +125,27 @@ Tiers differ in how heavy the check is, not in whether there is one:
 outside scope, tests broke — do not quietly move on:**
 
 1. Retry at the same tier, stating what failed and bounding the scope harder.
-2. If it fails again, retry one tier up (mechanical → ordinary → high-risk).
-3. If it fails at high-risk, stop retrying. Report what was attempted and the
-   current state. Do not leave a silent failure, and do not loop.
+2. If it fails again, retry once, one tier up (mechanical → ordinary,
+   ordinary → high-risk).
+3. If that retry also fails, or there is no tier above, stop retrying. Report
+   what was attempted and the current state. Do not leave a silent failure, and do not loop.
 
 ## Step 4 — Report
 
 One row per finding: summary, tier chosen, model actually used, the one-line
 reason, and the outcome (fixed, skipped, no change needed, failed after retry).
-Collect the `PLAUSIBLE` skips separately and say plainly that they were left
-alone pending verification. When there are several (roughly five or more),
+Collect the unverified skips (`PLAUSIBLE`, or no verdict in review output)
+separately and say plainly that they were left alone pending verification. When there are several (roughly five or more),
 also write that list to a file (e.g. `review-fix-pending.md`) alongside
 reporting it in the conversation — the list otherwise disappears once the
 conversation ends. Report that file as a change this skill made, and leave it
 out of any commit.
 
-Compare the final `git status --short` and hashes against the step 1 baseline
-and show **only what this skill changed.** New paths are this skill's. A
-baseline path whose hash changed was edited here too; label it "already
-modified before, also edited by this skill." Only baseline paths with an
+Compare the final `git status --short --untracked-files=all` and hashes against
+the step 1 baseline and show **only what this skill changed.** New paths are
+this skill's. A baseline path whose hash or status changed (for example,
+modified to deleted) was edited here too; label it "already modified before,
+also edited by this skill." Only baseline paths with an
 unchanged hash are named as pre-existing and unrelated — never folded into one
 undifferentiated "files changed" list.
 
