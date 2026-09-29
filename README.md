@@ -77,7 +77,7 @@ before it:
   argument against the approach this skill takes. Worth reading before you pick
   one.
 - **[crissmoldovan/agent-skills](https://github.com/crissmoldovan/agent-skills)** —
-  a 28-skill pack including a model-routing skill, profile-driven rather than
+  a multi-skill pack including a model-routing skill, profile-driven rather than
   automatic.
 
 ## What has not been measured
@@ -90,8 +90,35 @@ Honest disclosure, because nobody in this space seems to publish numbers:
 - **Whether Haiku matches Opus on "mechanical" findings.** The tier boundaries
   are reasoned, not measured.
 
-A benchmark addressing both is in [`benchmark/`](benchmark/). Until it has
-results, treat the tier table as a hypothesis.
+A benchmark for these questions is in progress and will be published
+separately. Until it has results, treat the tier table as a hypothesis.
+
+## How this differs from delegate
+
+[delegate](https://github.com/RealLight04/claude-delegate), by the same author,
+also grades work, picks a model tier, and verifies the result. What separates
+them is the input.
+
+delegate takes any list of independent tasks, so before handing anything off it
+checks whether each task makes sense without the conversation's context and how
+many groups remain after grouping. review-fix takes only findings a code review
+already produced. File, line and problem are fixed in advance, so there is less
+to decide about whether to delegate, and more machinery for review fixes
+specifically: filtering unverified findings, reading `CLAUDE.md` paired-file
+rules.
+
+In practice:
+
+- You ran `/code-review` on a PR and got six findings: two unused imports, a
+  missing null check, a payment retry bug, and two `PLAUSIBLE` ones. Use
+  review-fix. It fixes the four confirmed ones at their tiers and hands the two
+  `PLAUSIBLE` ones back as a list.
+- Before a release you have a README typo, a dark-mode bug on the settings page,
+  a new log cleanup script and a payment module refactor. None of it came from a
+  review and it is all different in kind, so use delegate. Four different files
+  make four groups, run in parallel.
+- With only one or two tasks, delegate is not worth it, and a single trivial
+  finding does not need review-fix either. Just ask directly.
 
 ## Install
 
@@ -129,9 +156,10 @@ You can also paste findings directly:
 /review-fix app/alerts.py:42 — dispatch() swallows the exception before commit, so alerts can double-send
 ```
 
-Findings marked `PLAUSIBLE` or carrying no verdict are listed but not touched —
-unverified claims don't get to edit your files. Nothing is committed until you
-ask.
+Findings from review output that are marked `PLAUSIBLE` or carry no verdict are
+listed but not touched — unverified claims don't get to edit your files.
+Findings you paste yourself count as confirmed by you, though the skill still
+reads the cited code before editing. Nothing is committed until you ask.
 
 Full behavior is in [SKILL.md](SKILL.md). It's the prompt Claude receives, so
 reading it tells you exactly what happens.
