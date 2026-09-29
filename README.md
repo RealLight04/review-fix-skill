@@ -108,7 +108,7 @@ many groups remain after grouping. review-fix takes only findings a code review
 already produced. File, line and problem are fixed in advance, so there is less
 to decide about whether to delegate, and more machinery for review fixes
 specifically: filtering unverified findings, checking that a cited `CLAUDE.md`
-rule actually exists, skipping findings whose files changed since the review,
+rule actually exists, skipping findings whose cited lines no longer match the review,
 and hashing already-dirty files so the report stays honest.
 
 In practice:
