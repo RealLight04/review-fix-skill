@@ -90,8 +90,11 @@ Honest disclosure, because nobody in this space seems to publish numbers:
 - **Whether Haiku matches Opus on "mechanical" findings.** The tier boundaries
   are reasoned, not measured.
 
-A benchmark for these questions is in progress and will be published
-separately. Until it has results, treat the tier table as a hypothesis.
+[`benchmark/`](benchmark/) has nine cases aimed at the second question: whether
+a fix at each tier lands and stays in scope, and whether the skill picks the
+expected tier. It has no results yet, and it does not measure token cost, so
+the first question is still open. Until there are results, treat the tier
+table as a hypothesis.
 
 ## How this differs from delegate
 
