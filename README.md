@@ -87,15 +87,23 @@ Honest disclosure, because nobody in this space seems to publish numbers:
 - **Whether tiering nets out positive here.** Grading each finding costs tokens
   in the orchestrating session. That cost has not been weighed against the
   savings from cheaper fix models. It may not pay for itself on small batches.
-- **Whether Haiku matches Opus on "mechanical" findings.** The tier boundaries
-  are reasoned, not measured.
+- **Whether Haiku matches Opus on "mechanical" findings.** Measured once, on
+  three small cases (see below). The tier boundaries are still mostly reasoned.
 
 [review-fix-bench](https://github.com/RealLight04/review-fix-bench) has nine
 cases aimed at the second question: whether a fix at each tier lands and stays
-in scope, and whether the skill picks the expected tier. It lives in its own
-repository so the answers are not sitting in this skill's install folder. It
-has no results yet, and it does not measure token cost, so the first question
-is still open. Until there are results, treat the tier table as a hypothesis.
+in scope, and whether the rubric picks the expected tier. It lives in its own
+repository so the answers are not sitting in this skill's install folder.
+
+A first run (81 fixes and 81 gradings across Haiku, Sonnet and Opus) is in the
+[results](https://github.com/RealLight04/review-fix-bench/blob/main/results/RESULTS.md).
+Haiku fixed all nine mechanical runs, like Opus. Haiku failed the one case with
+a swallowed exception, which every grading run sent to Opus. The rubric matched
+the expected tier in 58 of 81 gradings, and 13 times it rated a high-risk case
+Ordinary. All three models fixed those two cases correctly, so the labels may be
+set too high as much as the rubric too low. Either way the tier boundaries are
+still a hypothesis. The token numbers are
+dominated by subagent startup overhead, so the first question is still open.
 
 ## How this differs from delegate
 
