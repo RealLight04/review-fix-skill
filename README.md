@@ -90,19 +90,22 @@ Honest disclosure, because nobody in this space seems to publish numbers:
 - **Whether Haiku matches Opus on "mechanical" findings.** Measured once, on
   three small cases (see below). The tier boundaries are still mostly reasoned.
 
-[review-fix-bench](https://github.com/RealLight04/review-fix-bench) has nine
+[review-fix-bench](https://github.com/RealLight04/review-fix-bench) has fifteen
 cases aimed at the second question: whether a fix at each tier lands and stays
 in scope, and whether the rubric picks the expected tier. It lives in its own
 repository so the answers are not sitting in this skill's install folder.
 
-A first run (81 fixes and 81 gradings across Haiku, Sonnet and Opus) is in the
+Two runs are in the
 [results](https://github.com/RealLight04/review-fix-bench/blob/main/results/RESULTS.md).
-Haiku fixed all nine mechanical runs, like Opus. Haiku failed the one case with
-a swallowed exception, which every grading run sent to Opus. The rubric matched
+The first (81 fixes and 81 gradings across Haiku, Sonnet and Opus, nine cases)
+had Haiku fix all nine mechanical runs, like Opus, and fail the one case with a
+swallowed exception, which every grading run sent to Opus. The rubric matched
 the expected tier in 58 of 81 gradings, and 13 times it rated a high-risk case
-Ordinary. All three models fixed those two cases correctly, so the labels may be
-set too high as much as the rubric too low. Either way the tier boundaries are
-still a hypothesis. The token numbers are
+Ordinary. The second (54 gradings on six added cases) put every auth, payments,
+personal-data and migration case in High-risk, 36 of 36. All 13 misses from the
+first run were on the two cases whose danger is not a rubric word. Either those
+labels are too high or the rubric lacks a category for them, and with only two
+such cases the data cannot say which. The tier boundaries are still a hypothesis. The token numbers are
 dominated by subagent startup overhead, so the first question is still open.
 
 ## How this differs from delegate
